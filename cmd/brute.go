@@ -85,6 +85,7 @@ func BurpCall(EncryptMap map[string]interface{}, name string, params ...interfac
 		args[k] = reflect.ValueOf(param)
 	}
 	//Println()(args)
+	//fmt.Println(args)
 	return f.Call(args) // 调用函数并返回结果
 }
 
@@ -102,7 +103,7 @@ func SwitchBurp(service string, users []string, pass []string, hosts []string, p
 		wg.Add(1)
 		_ = ants.Submit(func() {
 			ip := <-tunnel
-			burpTask(ip, service, users, pass, port, thread, timeout, Domain, true)
+			burpTask(ip, service, users, pass, port, thread, timeout, Domain, true, false, nil)
 			wg.Done()
 		})
 	}
@@ -116,7 +117,7 @@ func SwitchBurp(service string, users []string, pass []string, hosts []string, p
 * 从新计算爆破方式，之前的爆破是采用分割user进行的，但是发现，user数量会远少于password，所以按照password进行分割
  */
 
-func burpTask(host, service string, users []string, pass []string, port int, thread int, timeout time.Duration, Domain string, run bool) {
+func burpTask(host, service string, users []string, pass []string, port int, thread int, timeout time.Duration, Domain string, run bool, jsonbool bool, out *JsonOut) {
 	var t int
 	var wg sync.WaitGroup
 	if len(pass) <= thread {
@@ -153,7 +154,6 @@ func burpTask(host, service string, users []string, pass []string, port int, thr
 	if service == "mongodb" && run == true {
 		BurpCall(BurpModule, "unmongodb", config.HostIn{Host: host, Port: BrutePort, TimeOut: TimeDuration}, "test", "test")
 	}
-
 	//Println()(all,num,t)
 	for i := 1; i <= t; i++ {
 		wg.Add(1)
@@ -164,8 +164,12 @@ func burpTask(host, service string, users []string, pass []string, port int, thr
 					if strings.Contains(p, "{user}") {
 						p = strings.ReplaceAll(p, "{user}", p)
 					}
-					result := BurpCall(BurpModule, service, config.HostIn{Host: host, Port: port, TimeOut: time.Duration(timeout), Domain: Domain}, u, p)
-					burpStatus(result, service, host, Domain, u, p)
+					if u == "" || p == "" {
+						continue
+					} else {
+						result := BurpCall(BurpModule, service, config.HostIn{Host: host, Port: port, TimeOut: time.Duration(timeout), Domain: Domain}, u, p)
+						burpStatus(result, service, host, Domain, u, p, jsonbool, out)
+					}
 				}
 			}
 			wg.Done()
@@ -174,7 +178,8 @@ func burpTask(host, service string, users []string, pass []string, port int, thr
 	wg.Wait()
 }
 
-func burpStatus(result []reflect.Value, service, host, domain, user, pass string) {
+func burpStatus(result []reflect.Value, service, host, domain, user, pass string, jsonbool bool, out *JsonOut) {
+	var lock sync.Mutex
 	// 这里是判断类型并返回结果的函数
 	if len(result) > 0 {
 		for _, v := range result {
@@ -183,6 +188,12 @@ func burpStatus(result []reflect.Value, service, host, domain, user, pass string
 				if v.Bool() == true {
 					if domain != "" {
 						domain = domain + "\\"
+					}
+					if jsonbool == true {
+						// 加锁
+						lock.Lock()
+						out.WeakPass = append(out.WeakPass, map[string]map[string]string{service: {user: pass}})
+						lock.Unlock()
 					}
 					Println(fmt.Sprintf(Clearln+`[+] %s brute %s success [%v%s:%s]`, host, service, domain, user, pass))
 				}
@@ -203,6 +214,11 @@ func Readiness(file *os.File) []string {
 			return readiness
 		}
 		str := strings.TrimSpace(string(data))
+		// 修复读取时出现空的导致抛出panic
+		if str == "" {
+			continue
+		}
+
 		readiness = append(readiness, str) /*将去除换行符的字符串写入切片*/
 	}
 	return readiness
@@ -213,7 +229,15 @@ func ReadTextToDic(service, user, pass string) ([]string, []string) {
 		userdic = config.Userdict[service]
 		passdic = config.Passwords
 	)
-	if user != "" {
+	// 入过不包含.txt的话，按照用户名和密码来算。其中
+	if user != "" && !strings.Contains(user, ".txt") {
+		userdic = strings.Split(user, ",")
+	}
+	if pass != "" && !strings.Contains(pass, ".txt") {
+		passdic = strings.Split(pass, ",")
+	}
+
+	if user != "" && strings.Contains(user, ".txt") {
 		userive, err := os.Open(user)
 		if err != nil {
 			Println(fmt.Sprintf(Clearln+"[ERROR] Open %s is failed,please check your user dic path", UserDic))
@@ -221,7 +245,7 @@ func ReadTextToDic(service, user, pass string) ([]string, []string) {
 		}
 		userdic = Readiness(userive)
 	}
-	if pass != "" {
+	if pass != "" && strings.Contains(pass, ".txt") {
 		passive, err := os.Open(pass)
 		if err != nil {
 			Println(fmt.Sprintf(Clearln+"[ERROR] Open %s is failed,please check your pass dic path", PassDic))

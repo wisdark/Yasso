@@ -24,7 +24,7 @@ var VulCmd = &cobra.Command{
 			return
 		}
 		if Hosts != "" {
-			ips, _ = ResolveIPS(Hosts) // resolve ip to []string ips
+			ips, _ = ResolveIPS(Hosts)
 		} else {
 			Println("Yasso scanner need a hosts")
 			return
@@ -41,38 +41,34 @@ func init() {
 	VulCmd.Flags().StringVar(&ProxyHost, "proxy", "", "Set socks5 proxy")
 	VulCmd.Flags().BoolVar(&smbGohstbool, "gs", false, "scan smbghost")
 	VulCmd.Flags().BoolVar(&ms17010bool, "ms", false, "scan ms17010")
-	VulCmd.Flags().BoolVar(&allbool, "all", false, "scan all vuln contains ms17010,smbghost")
+	VulCmd.Flags().BoolVar(&allbool, "all", true, "scan all vuln contains ms17010,smbghost")
 	rootCmd.AddCommand(VulCmd)
 }
 
 func VulScan(ips []string, ms17010bool bool, allbool bool, smbGohstbool bool) {
 	var wg sync.WaitGroup
 
-	go func() {
-		for _, ip := range ips {
-			tunnel <- ip
+	p, _ := ants.NewPoolWithFunc(len(ips), func(ip interface{}) {
+		if ms17010bool == true || allbool == true {
+			Ms17010Conn(config.HostIn{
+				Host:    ip.(string),
+				Port:    445,
+				TimeOut: TimeDuration,
+			})
 		}
-	}()
-	for i := 0; i < len(ips); i++ {
+		if smbGohstbool == true || allbool == true {
+			SmbGhostConn(config.HostIn{
+				Host:    ip.(string),
+				Port:    445,
+				TimeOut: TimeDuration,
+			})
+		}
+		wg.Done()
+	})
+
+	for _, ip := range ips {
 		wg.Add(1)
-		_ = ants.Submit(func() {
-			ip := <-tunnel
-			if ms17010bool == true || allbool == true {
-				Ms17010Conn(config.HostIn{
-					Host:    ip,
-					Port:    445,
-					TimeOut: TimeDuration,
-				})
-			}
-			if smbGohstbool == true || allbool == true {
-				SmbGhostConn(config.HostIn{
-					Host:    ip,
-					Port:    445,
-					TimeOut: TimeDuration,
-				})
-			}
-			wg.Done()
-		})
+		_ = p.Invoke(ip)
 	}
 	wg.Wait()
 }
